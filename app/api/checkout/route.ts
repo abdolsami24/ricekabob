@@ -11,7 +11,7 @@ import { quoteDelivery } from "@/lib/geocode";
 import { getServiceClient, supabaseConfigured, verifyCustomerUser } from "@/lib/supabase/server";
 import { getStripe, siteUrl, stripeTestMode } from "@/lib/stripe";
 import { getPointsBalance, redemptionFor, redeemPointsForOrder } from "@/lib/points";
-import { getSettings, getUnavailableIds } from "@/lib/admin";
+import { getSettings, getUnavailableIds, getHoursConfig } from "@/lib/admin";
 import { getPricingMenuById } from "@/lib/menuDb";
 import { validatePickupTime } from "@/lib/hours";
 import type Stripe from "stripe";
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
   // Scheduled pickup ("pickup for later"): today only, inside pickup hours.
   let scheduled_for: string | null = null;
   if (fulfillment === "pickup" && typeof body.scheduled_for === "string" && body.scheduled_for) {
-    const problem = validatePickupTime(body.scheduled_for);
+    const problem = validatePickupTime(body.scheduled_for, new Date(), await getHoursConfig());
     if (problem) return bad(problem);
     scheduled_for = new Date(body.scheduled_for).toISOString();
   }
