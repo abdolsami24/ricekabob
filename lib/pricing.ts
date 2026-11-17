@@ -3,7 +3,7 @@
 // - Tip: percent of subtotal (0-30%) or a custom amount capped at $200.00.
 // - Delivery fee: straight-line distance bands from the restaurant.
 
-import { getMenuItem } from "./menu";
+import { MENU_BY_ID, type MenuItem } from "./menu";
 
 export interface OrderLine {
   id: string;
@@ -15,6 +15,7 @@ export interface OrderLine {
 
 export interface Totals {
   subtotal_cents: number;
+  discount_cents: number;
   tax_cents: number;
   delivery_fee_cents: number;
   tip_cents: number;
@@ -65,22 +66,26 @@ export function computeTipCents(
 
 /**
  * Builds trusted order lines from client-sent {id, qty} pairs.
- * Throws on unknown items or bad quantities. Prices come only from lib/menu.
+ * Throws on unknown items or bad quantities. Prices come only from the
+ * trusted menu map (database menu when available, else lib/menu).
  */
-export function buildLines(input: { id: string; qty: number }[]): OrderLine[] {
+export function buildLines(
+  input: { id: string; qty: number }[],
+  menuById: Record<string, MenuItem> = MENU_BY_ID
+): OrderLine[] {
   if (!Array.isArray(input) || input.length === 0) throw new Error("Cart is empty");
   if (input.length > 50) throw new Error("Too many items");
   const merged = new Map<string, number>();
   for (const raw of input) {
     const id = String(raw?.id ?? "");
     const qty = Math.floor(Number(raw?.qty));
-    if (!getMenuItem(id)) throw new Error(`Unknown item: ${id}`);
+    if (!menuById[id]) throw new Error(`Unknown item: ${id}`);
     if (!Number.isFinite(qty) || qty < 1 || qty > 50) throw new Error(`Bad quantity for ${id}`);
     merged.set(id, (merged.get(id) ?? 0) + qty);
   }
   const lines: OrderLine[] = [];
   for (const [id, qty] of merged) {
-    const menuItem = getMenuItem(id)!;
+    const menuItem = menuById[id];
     lines.push({
       id,
       name: menuItem.name,
@@ -95,15 +100,20 @@ export function buildLines(input: { id: string; qty: number }[]): OrderLine[] {
 export function computeTotals(
   lines: OrderLine[],
   delivery_fee_cents: number,
-  tip_cents: number
+  tip_cents: number,
+  discount_cents = 0
 ): Totals {
   const subtotal_cents = lines.reduce((sum, l) => sum + l.line_total_cents, 0);
-  const tax_cents = taxFor(subtotal_cents);
+  // Loyalty discount comes off the subtotal BEFORE tax.
+  const safe_discount = Math.min(Math.max(discount_cents, 0), subtotal_cents);
+  const tax_cents = taxFor(subtotal_cents - safe_discount);
   return {
     subtotal_cents,
+    discount_cents: safe_discount,
     tax_cents,
     delivery_fee_cents,
     tip_cents,
-    total_cents: subtotal_cents + tax_cents + delivery_fee_cents + tip_cents,
+    total_cents:
+      subtotal_cents - safe_discount + tax_cents + delivery_fee_cents + tip_cents,
   };
 }

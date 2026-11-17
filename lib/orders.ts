@@ -5,6 +5,7 @@
 import { getServiceClient } from "./supabase/server";
 import { notifyOwner, type NotifyOrder } from "./email";
 import { dispatchToShipday, type ShipdayOrder } from "./shipday";
+import { earnPointsForPaidOrder } from "./points";
 
 export type OrderRow = NotifyOrder &
   ShipdayOrder & {
@@ -49,6 +50,14 @@ export async function markOrderPaid(
     .maybeSingle();
   if (error) throw error;
   const updated = (data as OrderRow) ?? { ...order, payment_status: status };
+
+  // Loyalty: award points to the signed-in customer (best-effort,
+  // idempotent — re-running the webhook never double-awards).
+  try {
+    await earnPointsForPaidOrder(updated);
+  } catch (err) {
+    console.error("[orders] loyalty earn failed:", err);
+  }
 
   // Owner email (best-effort).
   try {
