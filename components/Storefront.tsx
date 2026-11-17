@@ -46,6 +46,13 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
   const [qrSource, setQrSource] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [accountName, setAccountName] = useState<string | null>(null);
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [guestChosen, setGuestChosen] = useState(false);
+  const [siOpen, setSiOpen] = useState(false);
+  const [siEmail, setSiEmail] = useState("");
+  const [siPassword, setSiPassword] = useState("");
+  const [siBusy, setSiBusy] = useState(false);
+  const [siError, setSiError] = useState("");
   const feeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feeSeq = useRef(0);
 
@@ -78,8 +85,26 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
     if (cartLoaded) localStorage.setItem(CART_KEY, JSON.stringify(cart));
   }, [cart, cartLoaded]);
 
-  // If the customer is signed in, greet them and prefill the checkout
-  // form from their saved profile (only into fields still empty).
+  // Load the signed-in customer's profile: greet them and prefill the
+  // checkout form from their saved details (only into fields still empty).
+  async function loadAccountFromToken(token: string) {
+    try {
+      const res = await fetch("/api/account/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const me = await res.json();
+      const p = me.profile ?? {};
+      setAccountName(p.display_name || me.email || "My account");
+      setAccountEmail(me.email ?? null);
+      if (p.display_name) setName((prev) => prev || p.display_name);
+      if (p.phone) setPhone((prev) => prev || p.phone);
+      if (p.default_address) setAddress((prev) => prev || p.default_address);
+    } catch {
+      /* guest checkout is unaffected */
+    }
+  }
+
   useEffect(() => {
     const client = getBrowserClient();
     if (!client) return;
@@ -87,24 +112,80 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
       .getSession()
       .then(async ({ data }) => {
         const token = data.session?.access_token;
-        if (!token) return;
+        if (token) await loadAccountFromToken(token);
+        // Returning from Google sign-in: re-open the checkout panel.
         try {
-          const res = await fetch("/api/account/me", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!res.ok) return;
-          const me = await res.json();
-          const p = me.profile ?? {};
-          setAccountName(p.display_name || me.email || "My account");
-          if (p.display_name) setName((prev) => prev || p.display_name);
-          if (p.phone) setPhone((prev) => prev || p.phone);
-          if (p.default_address) setAddress((prev) => prev || p.default_address);
+          if (token && sessionStorage.getItem("mm_open_checkout") === "1") {
+            sessionStorage.removeItem("mm_open_checkout");
+            setShowCheckout(true);
+            setTimeout(
+              () => document.getElementById("checkout")?.scrollIntoView({ behavior: "smooth" }),
+              80
+            );
+          }
         } catch {
-          /* guest checkout is unaffected */
+          /* ignore */
         }
       })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sign in without leaving checkout (the "Sign in or continue as guest"
+  // choice at the top of the checkout panel).
+  async function inlineSignIn() {
+    setSiError("");
+    setSiBusy(true);
+    try {
+      const client = getBrowserClient();
+      if (!client) throw new Error("Sign-in is not available right now.");
+      const { data, error } = await client.auth.signInWithPassword({
+        email: siEmail.trim(),
+        password: siPassword,
+      });
+      if (error) throw new Error(error.message);
+      const token = data.session?.access_token;
+      if (token) await loadAccountFromToken(token);
+      setSiOpen(false);
+      setSiPassword("");
+    } catch (e) {
+      setSiError(e instanceof Error ? e.message : "Sign-in failed. Please try again.");
+    } finally {
+      setSiBusy(false);
+    }
+  }
+
+  // Google sign-in leaves the site and comes back; remember to re-open
+  // the checkout panel on return (the cart itself survives in localStorage).
+  async function googleSignIn() {
+    setSiError("");
+    try {
+      const client = getBrowserClient();
+      if (!client) throw new Error("unavailable");
+      try {
+        sessionStorage.setItem("mm_open_checkout", "1");
+      } catch {
+        /* ignore */
+      }
+      const { error } = await client.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}/` },
+      });
+      if (error) throw new Error(error.message);
+    } catch {
+      setSiError(
+        "Google sign-in is not switched on yet — please use email sign-in or continue as guest."
+      );
+    }
+  }
+
+  async function inlineSignOut() {
+    const client = getBrowserClient();
+    if (client) await client.auth.signOut().catch(() => {});
+    setAccountName(null);
+    setAccountEmail(null);
+    setGuestChosen(false);
+  }
 
   const lines = useMemo(() => {
     return MENU.filter((m) => (cart[m.id] ?? 0) > 0).map((m) => ({
@@ -344,6 +425,86 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
                 <span>{formatCents(l.line_total_cents)}</span>
               </div>
             ))}
+
+            {accountEmail ? (
+              <div className="auth-box">
+                <div className="fee-msg ok">
+                  ✓ Signed in as {accountEmail} — this order will be saved to your account.
+                </div>
+                <button type="button" className="auth-link" onClick={inlineSignOut}>
+                  Not you? Log out
+                </button>
+              </div>
+            ) : guestChosen && !siOpen ? (
+              <div className="auth-box">
+                <span>👤 Continuing as guest · </span>
+                <button type="button" className="auth-link" onClick={() => setSiOpen(true)}>
+                  Sign in
+                </button>
+              </div>
+            ) : (
+              <div className="auth-box">
+                <strong>Have an account?</strong>
+                <div className="toggle-row">
+                  <button
+                    type="button"
+                    className={siOpen ? "active" : ""}
+                    onClick={() => setSiOpen(true)}
+                  >
+                    🔑 Sign in
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGuestChosen(true);
+                      setSiOpen(false);
+                    }}
+                  >
+                    👤 Continue as guest
+                  </button>
+                </div>
+                <button type="button" className="google-btn" onClick={googleSignIn}>
+                  Sign in with Google
+                </button>
+                {siOpen && (
+                  <div>
+                    <div className="field">
+                      <label htmlFor="si-email">Email</label>
+                      <input
+                        id="si-email"
+                        type="email"
+                        value={siEmail}
+                        onChange={(e) => setSiEmail(e.target.value)}
+                        autoComplete="email"
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="si-password">Password</label>
+                      <input
+                        id="si-password"
+                        type="password"
+                        value={siPassword}
+                        onChange={(e) => setSiPassword(e.target.value)}
+                        autoComplete="current-password"
+                      />
+                    </div>
+                    {siError && <div className="fee-msg err">{siError}</div>}
+                    <button
+                      type="button"
+                      className="checkout-btn"
+                      disabled={siBusy || !siEmail || !siPassword}
+                      onClick={inlineSignIn}
+                    >
+                      {siBusy ? "Signing in…" : "Sign in & continue"}
+                    </button>
+                    <div className="fee-msg">
+                      New here? <Link href="/account">Create an account</Link> — it takes 30
+                      seconds.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="toggle-row">
               <button
