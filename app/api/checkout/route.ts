@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { buildLines, computeTotals, computeTipCents } from "@/lib/pricing";
 import { quoteDelivery } from "@/lib/geocode";
-import { getServiceClient, supabaseConfigured } from "@/lib/supabase/server";
+import { getServiceClient, supabaseConfigured, verifyCustomerUser } from "@/lib/supabase/server";
 import { getStripe, siteUrl, stripeTestMode } from "@/lib/stripe";
 import type Stripe from "stripe";
 
@@ -68,10 +68,16 @@ export async function POST(req: Request) {
   );
   const totals = computeTotals(lines, delivery_fee_cents, tip_cents);
 
+  // Optional: if the customer is signed in, link the order to their
+  // account so it appears in their order history. Guests simply omit the
+  // Authorization header and stay anonymous, as before.
+  const customerUser = await verifyCustomerUser(req).catch(() => null);
+
   const supabase = getServiceClient();
   const { data: order, error } = await supabase
     .from("orders")
     .insert({
+      user_id: customerUser?.id ?? null,
       customer_name,
       customer_phone,
       items_json: lines,

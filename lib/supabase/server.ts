@@ -1,8 +1,11 @@
 // Server-side Supabase helpers.
 // - getServiceClient(): service-role client (SERVER ONLY — bypasses RLS,
 //   used by API routes after they have done their own checks).
-// - verifyKitchenUser(): checks a Supabase Auth access token sent by the
-//   kitchen page and returns the staff user, or null.
+// - verifyAnyUser(): validates a Supabase Auth access token (any account).
+// - verifyCustomerUser(): any signed-in customer (same as verifyAnyUser).
+// - verifyKitchenUser(): signed-in user whose profile role is 'staff'.
+//   This separation matters: once customers can register on the website,
+//   a customer token must NEVER open the kitchen APIs.
 
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 
@@ -31,10 +34,10 @@ export function getServiceClient(): SupabaseClient {
 }
 
 /**
- * Verifies the Authorization: Bearer <supabase-access-token> header of a
- * kitchen API request. Returns the authenticated staff user or null.
+ * Verifies the Authorization: Bearer <supabase-access-token> header.
+ * Returns the authenticated user (customer or staff), or null.
  */
-export async function verifyKitchenUser(req: Request): Promise<User | null> {
+export async function verifyAnyUser(req: Request): Promise<User | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anon) return null;
@@ -47,4 +50,31 @@ export async function verifyKitchenUser(req: Request): Promise<User | null> {
   const { data, error } = await client.auth.getUser(token);
   if (error || !data.user) return null;
   return data.user;
+}
+
+/** Any signed-in website customer. */
+export async function verifyCustomerUser(req: Request): Promise<User | null> {
+  return verifyAnyUser(req);
+}
+
+/**
+ * Kitchen access: the caller must be signed in AND have role 'staff' in
+ * the profiles table (see supabase/accounts-schema.sql, which promotes
+ * the pre-existing kitchen account to staff).
+ */
+export async function verifyKitchenUser(req: Request): Promise<User | null> {
+  const user = await verifyAnyUser(req);
+  if (!user) return null;
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (error || !data || data.role !== "staff") return null;
+    return user;
+  } catch {
+    return null;
+  }
 }

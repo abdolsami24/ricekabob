@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CATEGORIES, MENU, formatCents, type MenuItem } from "@/lib/menu";
+import { getBrowserClient } from "@/lib/supabase/client";
 
 const CART_KEY = "madinah_cart_v1";
 type Cart = Record<string, number>;
@@ -44,6 +45,7 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
   const [successOrder, setSuccessOrder] = useState<number | null>(null);
   const [qrSource, setQrSource] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [accountName, setAccountName] = useState<string | null>(null);
   const feeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feeSeq = useRef(0);
 
@@ -75,6 +77,34 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
   useEffect(() => {
     if (cartLoaded) localStorage.setItem(CART_KEY, JSON.stringify(cart));
   }, [cart, cartLoaded]);
+
+  // If the customer is signed in, greet them and prefill the checkout
+  // form from their saved profile (only into fields still empty).
+  useEffect(() => {
+    const client = getBrowserClient();
+    if (!client) return;
+    client.auth
+      .getSession()
+      .then(async ({ data }) => {
+        const token = data.session?.access_token;
+        if (!token) return;
+        try {
+          const res = await fetch("/api/account/me", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const me = await res.json();
+          const p = me.profile ?? {};
+          setAccountName(p.display_name || me.email || "My account");
+          if (p.display_name) setName((prev) => prev || p.display_name);
+          if (p.phone) setPhone((prev) => prev || p.phone);
+          if (p.default_address) setAddress((prev) => prev || p.default_address);
+        } catch {
+          /* guest checkout is unaffected */
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const lines = useMemo(() => {
     return MENU.filter((m) => (cart[m.id] ?? 0) > 0).map((m) => ({
@@ -148,9 +178,20 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
     }
     setPlacing(true);
     try {
+      // Attach the account session (if any) so the order is saved to the
+      // customer's history. Guests send no header and stay anonymous.
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      try {
+        const client = getBrowserClient();
+        const { data } = client ? await client.auth.getSession() : { data: { session: null } };
+        const token = data.session?.access_token;
+        if (token) headers.Authorization = `Bearer ${token}`;
+      } catch {
+        /* proceed as guest */
+      }
       const res = await fetch("/api/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           items: lines.map((l) => ({ id: l.item.id, qty: l.qty })),
           customer_name: name.trim(),
@@ -204,6 +245,7 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
         <p>Halal Kabob · Turkish · Afghan Persian — Denver Halal</p>
         <span className="halal-badge">100% HALAL</span>
         <div className="header-actions">
+          <Link href="/account">{accountName ? `👤 ${accountName}` : "👤 Log in"}</Link>
           <Link href="/track">📦 Track order</Link>
           {installEvent && (
             <button
