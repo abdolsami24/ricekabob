@@ -26,38 +26,45 @@ import {
   uploadDishPhoto,
   addCategory,
   addMenuItem,
+  getHoursConfig,
+  setHoursConfig,
 } from "@/lib/admin";
+import { HOURS_SETTING_KEYS, parseHHMM } from "@/lib/hours";
 import { getMenuItem } from "@/lib/menu";
 import { getDbMenu } from "@/lib/menuDb";
 
 export const dynamic = "force-dynamic";
 
 async function staffState() {
-  const [settings, unavailable, promotions, photos, menu] = await Promise.all([
+  const [settings, unavailable, promotions, photos, menu, hours] = await Promise.all([
     getSettings(),
     getUnavailableIds(),
     listPromotions(false),
     getDishPhotos(),
     getDbMenu(),
+    getHoursConfig(),
   ]);
   return {
     settings,
     unavailable: [...unavailable],
     promotions,
     photos,
+    hours,
     menu: { categories: menu.categories, items: menu.items },
   };
 }
 
 export async function GET(req: Request) {
-  const [settings, unavailable, activePromos, photos] = await Promise.all([
+  const [settings, unavailable, activePromos, photos, hours] = await Promise.all([
     getSettings(),
     getUnavailableIds(),
     listPromotions(true),
     getDishPhotos(),
+    getHoursConfig(),
   ]);
   const publicState = {
     settings,
+    hours,
     unavailable: [...unavailable],
     promotions: activePromos.map((p) => ({
       id: p.id,
@@ -125,6 +132,32 @@ export async function POST(req: Request) {
         const key = String(body.key ?? "");
         if (!isSettingKey(key)) throw new Error("Unknown setting");
         await setSetting(key, body.value === true);
+        break;
+      }
+      case "set_hours": {
+        const raw =
+          body.hours && typeof body.hours === "object"
+            ? (body.hours as Record<string, unknown>)
+            : {};
+        const values: Record<string, string> = {};
+        for (const key of HOURS_SETTING_KEYS) {
+          if (parseHHMM(raw[key]) === null) {
+            throw new Error("Please fill in all eight opening and closing times.");
+          }
+          values[key] = String(raw[key]).trim();
+        }
+        const pairs: [string, string, string][] = [
+          ["hours_pickup_mon_sat_open", "hours_pickup_mon_sat_close", "Pickup (Mon–Sat)"],
+          ["hours_pickup_sun_open", "hours_pickup_sun_close", "Pickup (Sunday)"],
+          ["hours_delivery_mon_sat_open", "hours_delivery_mon_sat_close", "Delivery (Mon–Sat)"],
+          ["hours_delivery_sun_open", "hours_delivery_sun_close", "Delivery (Sunday)"],
+        ];
+        for (const [openKey, closeKey, label] of pairs) {
+          if ((parseHHMM(values[openKey]) ?? 0) >= (parseHHMM(values[closeKey]) ?? 0)) {
+            throw new Error(`${label}: closing time must be after opening time.`);
+          }
+        }
+        await setHoursConfig(values);
         break;
       }
       case "set_availability": {
