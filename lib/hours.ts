@@ -6,7 +6,7 @@
 
 export const RESTAURANT_TZ = "America/Denver";
 
-interface DayWindow {
+export interface DayWindow {
   open: number; // minutes from midnight, Denver time
   close: number;
 }
@@ -35,6 +35,115 @@ export const DELIVERY_HOURS: DayWindow[] = [
   MON_SAT_DELIVERY,
   MON_SAT_DELIVERY,
 ];
+
+/** The four editable windows (admin panel). Minutes from midnight. */
+export interface HoursConfig {
+  pickup_mon_sat: DayWindow;
+  pickup_sun: DayWindow;
+  delivery_mon_sat: DayWindow;
+  delivery_sun: DayWindow;
+}
+
+export const DEFAULT_HOURS_CONFIG: HoursConfig = {
+  pickup_mon_sat: MON_SAT_PICKUP,
+  pickup_sun: SUN_PICKUP,
+  delivery_mon_sat: MON_SAT_DELIVERY,
+  delivery_sun: SUN_DELIVERY,
+};
+
+/** site_settings keys for the eight editable times. */
+export const HOURS_SETTING_KEYS = [
+  "hours_pickup_mon_sat_open",
+  "hours_pickup_mon_sat_close",
+  "hours_pickup_sun_open",
+  "hours_pickup_sun_close",
+  "hours_delivery_mon_sat_open",
+  "hours_delivery_mon_sat_close",
+  "hours_delivery_sun_open",
+  "hours_delivery_sun_close",
+] as const;
+
+/** "HH:MM" -> minutes from midnight, or null when malformed. */
+export function parseHHMM(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (hh > 23 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+function windowFromMap(
+  map: Record<string, unknown>,
+  openKey: string,
+  closeKey: string,
+  fallback: DayWindow
+): DayWindow {
+  const open = parseHHMM(map[openKey]);
+  const close = parseHHMM(map[closeKey]);
+  if (open === null || close === null || open >= close) return fallback;
+  return { open, close };
+}
+
+/**
+ * Builds the hours config from raw site_settings values (jsonb strings
+ * like "19:45"). Any missing or invalid window falls back to the
+ * built-in default for that window.
+ */
+export function hoursConfigFromMap(map: Record<string, unknown>): HoursConfig {
+  return {
+    pickup_mon_sat: windowFromMap(
+      map,
+      "hours_pickup_mon_sat_open",
+      "hours_pickup_mon_sat_close",
+      DEFAULT_HOURS_CONFIG.pickup_mon_sat
+    ),
+    pickup_sun: windowFromMap(
+      map,
+      "hours_pickup_sun_open",
+      "hours_pickup_sun_close",
+      DEFAULT_HOURS_CONFIG.pickup_sun
+    ),
+    delivery_mon_sat: windowFromMap(
+      map,
+      "hours_delivery_mon_sat_open",
+      "hours_delivery_mon_sat_close",
+      DEFAULT_HOURS_CONFIG.delivery_mon_sat
+    ),
+    delivery_sun: windowFromMap(
+      map,
+      "hours_delivery_sun_open",
+      "hours_delivery_sun_close",
+      DEFAULT_HOURS_CONFIG.delivery_sun
+    ),
+  };
+}
+
+/** Expands a config into the 7-day arrays (index 0 = Sunday). */
+export function pickupWindows(config: HoursConfig): DayWindow[] {
+  return [
+    config.pickup_sun,
+    config.pickup_mon_sat,
+    config.pickup_mon_sat,
+    config.pickup_mon_sat,
+    config.pickup_mon_sat,
+    config.pickup_mon_sat,
+    config.pickup_mon_sat,
+  ];
+}
+
+export function deliveryWindows(config: HoursConfig): DayWindow[] {
+  return [
+    config.delivery_sun,
+    config.delivery_mon_sat,
+    config.delivery_mon_sat,
+    config.delivery_mon_sat,
+    config.delivery_mon_sat,
+    config.delivery_mon_sat,
+    config.delivery_mon_sat,
+  ];
+}
 
 export function formatMinutes(mins: number): string {
   const h24 = Math.floor(mins / 60);
@@ -85,8 +194,11 @@ export function denverParts(date: Date): DenverParts {
 }
 
 /** Today's pickup window in Denver (for hints and input min/max). */
-export function pickupWindowToday(now = new Date()): DayWindow {
-  return PICKUP_HOURS[denverParts(now).dayIndex];
+export function pickupWindowToday(
+  now = new Date(),
+  config: HoursConfig = DEFAULT_HOURS_CONFIG
+): DayWindow {
+  return pickupWindows(config)[denverParts(now).dayIndex];
 }
 
 /** "HH:MM" (Denver wall time today) -> "10:00" style input value. */
@@ -128,7 +240,11 @@ export function denverTimeTodayToISO(hhmm: string, now = new Date()): string | n
  * Validates a scheduled pickup time (spec: today only, inside pickup
  * hours, at least ~10 minutes from now). Returns an error message or null.
  */
-export function validatePickupTime(iso: string, now = new Date()): string | null {
+export function validatePickupTime(
+  iso: string,
+  now = new Date(),
+  config: HoursConfig = DEFAULT_HOURS_CONFIG
+): string | null {
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) return "Please choose a pickup time.";
   const want = denverParts(when);
@@ -139,7 +255,7 @@ export function validatePickupTime(iso: string, now = new Date()): string | null
   if (when.getTime() < now.getTime() + 10 * 60000) {
     return "Please pick a pickup time at least 10 minutes from now.";
   }
-  const win = PICKUP_HOURS[want.dayIndex];
+  const win = pickupWindows(config)[want.dayIndex];
   if (want.minutes < win.open || want.minutes > win.close) {
     return `Pickup hours today are ${formatWindow(win)} — please pick a time inside them.`;
   }

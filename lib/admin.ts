@@ -5,6 +5,11 @@
 // are no promotions — the site behaves exactly as before this feature.
 
 import { getServiceClient } from "./supabase/server";
+import {
+  HOURS_SETTING_KEYS,
+  hoursConfigFromMap,
+  type HoursConfig,
+} from "./hours";
 
 export interface SiteSettings {
   ordering_enabled: boolean;
@@ -48,6 +53,41 @@ export async function setSetting(key: keyof SiteSettings, value: boolean): Promi
 
 export function isSettingKey(key: string): key is keyof SiteSettings {
   return (SETTING_KEYS as string[]).includes(key);
+}
+
+/**
+ * Opening hours from site_settings (the eight hours_* keys, stored as
+ * "HH:MM" strings). Fails safe to the built-in defaults.
+ */
+export async function getHoursConfig(): Promise<HoursConfig> {
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("site_settings")
+      .select("key, value")
+      .in("key", [...HOURS_SETTING_KEYS]);
+    if (error) return hoursConfigFromMap({});
+    const map: Record<string, unknown> = {};
+    for (const row of data ?? []) map[row.key as string] = row.value;
+    return hoursConfigFromMap(map);
+  } catch {
+    return hoursConfigFromMap({});
+  }
+}
+
+/** Saves the eight "HH:MM" strings (already validated by the caller). */
+export async function setHoursConfig(values: Record<string, string>): Promise<void> {
+  const supabase = getServiceClient();
+  const now = new Date().toISOString();
+  const rows = HOURS_SETTING_KEYS.map((key) => ({
+    key,
+    value: values[key],
+    updated_at: now,
+  }));
+  const { error } = await supabase
+    .from("site_settings")
+    .upsert(rows, { onConflict: "key" });
+  if (error) throw error;
 }
 
 /** Ids of dishes the admin marked sold out. Empty set = all available. */
