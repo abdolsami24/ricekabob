@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents, type MenuItem } from "@/lib/menu";
+import { minutesToInputValue, type HoursConfig } from "@/lib/hours";
 
 interface Promotion {
   id: number;
@@ -30,6 +31,7 @@ interface AdminState {
   unavailable: string[];
   promotions: Promotion[];
   photos: Record<string, string>;
+  hours: HoursConfig;
   menu: { categories: string[]; items: MenuItem[] };
 }
 
@@ -49,6 +51,28 @@ export default function AdminPanel() {
   const [promoItemId, setPromoItemId] = useState("");
   // Category form
   const [newCategory, setNewCategory] = useState("");
+  // Hours form (eight "HH:MM" strings, synced from state when it loads)
+  const [hPickupMsOpen, setHPickupMsOpen] = useState("");
+  const [hPickupMsClose, setHPickupMsClose] = useState("");
+  const [hPickupSunOpen, setHPickupSunOpen] = useState("");
+  const [hPickupSunClose, setHPickupSunClose] = useState("");
+  const [hDeliveryMsOpen, setHDeliveryMsOpen] = useState("");
+  const [hDeliveryMsClose, setHDeliveryMsClose] = useState("");
+  const [hDeliverySunOpen, setHDeliverySunOpen] = useState("");
+  const [hDeliverySunClose, setHDeliverySunClose] = useState("");
+
+  useEffect(() => {
+    if (!state?.hours) return;
+    setHPickupMsOpen(minutesToInputValue(state.hours.pickup_mon_sat.open));
+    setHPickupMsClose(minutesToInputValue(state.hours.pickup_mon_sat.close));
+    setHPickupSunOpen(minutesToInputValue(state.hours.pickup_sun.open));
+    setHPickupSunClose(minutesToInputValue(state.hours.pickup_sun.close));
+    setHDeliveryMsOpen(minutesToInputValue(state.hours.delivery_mon_sat.open));
+    setHDeliveryMsClose(minutesToInputValue(state.hours.delivery_mon_sat.close));
+    setHDeliverySunOpen(minutesToInputValue(state.hours.delivery_sun.open));
+    setHDeliverySunClose(minutesToInputValue(state.hours.delivery_sun.close));
+  }, [state]);
+
   // Dish form
   const [dishName, setDishName] = useState("");
   const [dishDesc, setDishDesc] = useState("");
@@ -194,6 +218,22 @@ export default function AdminPanel() {
   }
 
   const unavailableSet = new Set(state.unavailable);
+  const hoursRow = (
+    label: string,
+    openVal: string,
+    setOpen: (v: string) => void,
+    closeVal: string,
+    setClose: (v: string) => void
+  ) => (
+    <div className="field">
+      <label>{label}</label>
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <input type="time" value={openVal} onChange={(e) => setOpen(e.target.value)} />
+        <span>to</span>
+        <input type="time" value={closeVal} onChange={(e) => setClose(e.target.value)} />
+      </div>
+    </div>
+  );
   const switchRow = (
     label: string,
     key: "ordering_enabled" | "pickup_enabled" | "delivery_enabled"
@@ -230,6 +270,43 @@ export default function AdminPanel() {
         <p style={{ color: "#8a7a5f" }}>
           Changes apply to the website immediately. Turning the whole system OFF lets
           customers browse the menu but not order.
+        </p>
+      </section>
+
+      <section className="panel">
+        <h3>🕙 Opening hours</h3>
+        {hoursRow("🏃 Pickup — Monday to Saturday", hPickupMsOpen, setHPickupMsOpen, hPickupMsClose, setHPickupMsClose)}
+        {hoursRow("🏃 Pickup — Sunday", hPickupSunOpen, setHPickupSunOpen, hPickupSunClose, setHPickupSunClose)}
+        {hoursRow("🛵 Delivery — Monday to Saturday", hDeliveryMsOpen, setHDeliveryMsOpen, hDeliveryMsClose, setHDeliveryMsClose)}
+        {hoursRow("🛵 Delivery — Sunday", hDeliverySunOpen, setHDeliverySunOpen, hDeliverySunClose, setHDeliverySunClose)}
+        <button
+          type="button"
+          className="checkout-btn"
+          disabled={busy}
+          onClick={() =>
+            act(
+              {
+                action: "set_hours",
+                hours: {
+                  hours_pickup_mon_sat_open: hPickupMsOpen,
+                  hours_pickup_mon_sat_close: hPickupMsClose,
+                  hours_pickup_sun_open: hPickupSunOpen,
+                  hours_pickup_sun_close: hPickupSunClose,
+                  hours_delivery_mon_sat_open: hDeliveryMsOpen,
+                  hours_delivery_mon_sat_close: hDeliveryMsClose,
+                  hours_delivery_sun_open: hDeliverySunOpen,
+                  hours_delivery_sun_close: hDeliverySunClose,
+                },
+              },
+              "✔ Hours saved — the website now uses the new hours."
+            )
+          }
+        >
+          Save hours
+        </button>
+        <p style={{ color: "#8a7a5f" }}>
+          Denver time. The hours shown on the website and the “pickup for
+          later” choices follow these times.
         </p>
       </section>
 

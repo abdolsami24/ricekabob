@@ -12,12 +12,16 @@ import { getBrowserClient } from "@/lib/supabase/client";
 import {
   PICKUP_HOURS,
   DELIVERY_HOURS,
+  DEFAULT_HOURS_CONFIG,
+  pickupWindows,
+  deliveryWindows,
   formatWindow,
   pickupWindowToday,
   denverParts,
   denverTimeTodayToISO,
   validatePickupTime,
   minutesToInputValue,
+  type HoursConfig,
 } from "@/lib/hours";
 
 const CART_KEY = "madinah_cart_v1";
@@ -47,6 +51,7 @@ interface SiteState {
   unavailable: string[];
   promotions: { id: number; title: string; body: string; item_id: string | null }[];
   photos: Record<string, string>;
+  hours?: HoursConfig;
 }
 
 export default function Storefront({
@@ -142,6 +147,11 @@ export default function Storefront({
   const unavailableSet = new Set(siteState?.unavailable ?? []);
   const promos = siteState?.promotions ?? [];
   const dishPhotos = siteState?.photos ?? {};
+  // Admin-editable hours (fall back to the built-in defaults until the
+  // site state loads or if the server does not send them).
+  const hoursCfg = siteState?.hours ?? DEFAULT_HOURS_CONFIG;
+  const pickupWins = siteState?.hours ? pickupWindows(hoursCfg) : PICKUP_HOURS;
+  const deliveryWins = siteState?.hours ? deliveryWindows(hoursCfg) : DELIVERY_HOURS;
 
   // If the admin turned the selected fulfillment type off, switch over.
   useEffect(() => {
@@ -350,7 +360,7 @@ export default function Storefront({
     if (fulfillment === "pickup" && pickupWhen === "later") {
       const iso = pickupTime ? denverTimeTodayToISO(pickupTime) : null;
       if (!iso) return setError("Please choose a pickup time.");
-      const problem = validatePickupTime(iso);
+      const problem = validatePickupTime(iso, new Date(), hoursCfg);
       if (problem) return setError(problem);
       scheduledFor = iso;
     }
@@ -677,8 +687,8 @@ export default function Storefront({
             </div>
             <div className="fee-msg">
               {fulfillment === "pickup"
-                ? `Pickup today: ${formatWindow(PICKUP_HOURS[denverParts(new Date()).dayIndex])}`
-                : `Delivery today: ${formatWindow(DELIVERY_HOURS[denverParts(new Date()).dayIndex])}`}
+                ? `Pickup today: ${formatWindow(pickupWins[denverParts(new Date()).dayIndex])}`
+                : `Delivery today: ${formatWindow(deliveryWins[denverParts(new Date()).dayIndex])}`}
             </div>
 
             {fulfillment === "pickup" && (
@@ -705,13 +715,13 @@ export default function Storefront({
                     <input
                       type="time"
                       value={pickupTime}
-                      min={minutesToInputValue(pickupWindowToday().open)}
-                      max={minutesToInputValue(pickupWindowToday().close)}
+                      min={minutesToInputValue(pickupWindowToday(new Date(), hoursCfg).open)}
+                      max={minutesToInputValue(pickupWindowToday(new Date(), hoursCfg).close)}
                       onChange={(e) => setPickupTime(e.target.value)}
                     />
                     <div className="fee-msg">
                       Pick any time today inside pickup hours (
-                      {formatWindow(pickupWindowToday())}) — e.g. in 2 or 3 hours.
+                      {formatWindow(pickupWindowToday(new Date(), hoursCfg))}) — e.g. in 2 or 3 hours.
                     </div>
                   </>
                 )}
@@ -893,9 +903,9 @@ export default function Storefront({
         Madinah Market · 3126 S Parker Rd, Aurora, CO 80014 ·{" "}
         <a href="tel:+17207630786">720-763-0786</a>
         <br />
-        🏃 Pickup: Mon–Sat {formatWindow(PICKUP_HOURS[1])} · Sun {formatWindow(PICKUP_HOURS[0])}
+        🏃 Pickup: Mon–Sat {formatWindow(pickupWins[1])} · Sun {formatWindow(pickupWins[0])}
         <br />
-        🛵 Delivery: Mon–Sat {formatWindow(DELIVERY_HOURS[1])} · Sun {formatWindow(DELIVERY_HOURS[0])}
+        🛵 Delivery: Mon–Sat {formatWindow(deliveryWins[1])} · Sun {formatWindow(deliveryWins[0])}
         <br />
         100% Halal · Kabob, Turkish, Afghan Persian &amp; Middle Eastern
       </footer>
