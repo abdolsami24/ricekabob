@@ -398,3 +398,12 @@ input, select, textarea { font: inherit; }
 .ready-flash .big { font-size: 9rem; font-weight: 900; line-height: 1; }
 .ready-flash .label { font-size: 3rem; font-weight: 800; }
 .display-foot { text-align: center; color: #a3a3a3; margin-top: 2rem; font-size: 1.1rem; }
+/* Keep Checkout clear of the Netlify badge */
+@media (min-width: 701px) {
+  .cart-bar { padding-right: 13.5rem; }
+}
+@media (max-width: 700px) {
+  .cart-bar { bottom: 66px; left: 0.6rem; right: 0.6rem; border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
+  footer { padding-bottom: 84px; }
+}
+
