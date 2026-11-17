@@ -5,6 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { getServiceClient, supabaseConfigured, verifyKitchenUser } from "@/lib/supabase/server";
+import { reversePointsForCancelledOrder } from "@/lib/points";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,15 @@ export async function POST(req: Request) {
   if (error) {
     console.error("[kitchen/status] update failed:", error);
     return NextResponse.json({ error: "Could not update the order." }, { status: 500 });
+  }
+  // Loyalty: a cancelled order refunds its redeemed points and reverses
+  // its earned points (best-effort, idempotent).
+  if (status === "cancelled") {
+    try {
+      await reversePointsForCancelledOrder(orderId);
+    } catch (err) {
+      console.error("[kitchen/status] points reversal failed:", err);
+    }
   }
   return NextResponse.json({ ok: true });
 }
