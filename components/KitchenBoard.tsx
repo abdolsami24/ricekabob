@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents } from "@/lib/menu";
+import { formatDenverTime } from "@/lib/hours";
 import type { Session } from "@supabase/supabase-js";
 
 interface KitchenOrder {
@@ -20,12 +21,14 @@ interface KitchenOrder {
   customer_phone: string | null;
   items_json: { name: string; qty: number; line_total_cents: number }[];
   subtotal_cents: number;
+  discount_cents: number;
   tax_cents: number;
   delivery_fee_cents: number;
   tip_cents: number;
   total_cents: number;
   fulfillment: string;
   delivery_address: string | null;
+  scheduled_for: string | null;
   payment_status: string;
   kitchen_status: string;
   shipday_order_id: string | null;
@@ -83,11 +86,13 @@ function printTicket(order: KitchenOrder) {
     <div class="c">MADINAH MARKET</div>
     <h1>#${order.id}</h1>
     <div class="c">${order.fulfillment.toUpperCase()} · ${new Date(order.created_at).toLocaleString()}</div>
+    ${order.scheduled_for ? `<div class="c" style="font-size:20px;font-weight:bold">⏰ PICKUP AT ${formatDenverTime(order.scheduled_for)}</div>` : ""}
     <hr/>
     <div>${order.customer_name ?? ""} · ${order.customer_phone ?? ""}</div>
     ${order.fulfillment === "delivery" ? `<div><strong>DELIVERY:</strong> ${order.delivery_address ?? ""}</div>` : ""}
     <hr/>${items}<hr/>
     <div class="row"><span>Subtotal</span><span>${formatCents(order.subtotal_cents)}</span></div>
+    ${order.discount_cents > 0 ? `<div class="row"><span>Loyalty discount</span><span>-${formatCents(order.discount_cents)}</span></div>` : ""}
     <div class="row"><span>Tax</span><span>${formatCents(order.tax_cents)}</span></div>
     ${order.delivery_fee_cents > 0 ? `<div class="row"><span>Delivery fee</span><span>${formatCents(order.delivery_fee_cents)}</span></div>` : ""}
     ${order.tip_cents > 0 ? `<div class="row"><span>Tip</span><span>${formatCents(order.tip_cents)}</span></div>` : ""}
@@ -331,6 +336,9 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
               />
               Auto-print new orders
             </label>
+            <a className="k-btn" href="/admin" style={{ textDecoration: "none" }}>
+              ⚙️ Admin
+            </a>
             <button type="button" className="k-btn" onClick={logout}>
               Log out
             </button>
@@ -368,6 +376,21 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                 <div style={{ color: "#cbbfa8", fontSize: "0.95rem" }}>
                   {new Date(o.created_at).toLocaleTimeString()} · status: {o.kitchen_status}
                 </div>
+                {o.scheduled_for && (
+                  <div
+                    style={{
+                      marginTop: "0.3rem",
+                      background: "#f59e0b",
+                      color: "#1a1207",
+                      fontWeight: 800,
+                      borderRadius: 8,
+                      padding: "0.25rem 0.6rem",
+                      display: "inline-block",
+                    }}
+                  >
+                    ⏰ PICKUP AT {formatDenverTime(o.scheduled_for)}
+                  </div>
+                )}
                 {o.fulfillment === "delivery" && (
                   <div style={{ marginTop: "0.3rem" }}>
                     📍 {o.delivery_address ?? ""}
@@ -390,6 +413,12 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                     <span>Subtotal</span>
                     <span>{formatCents(o.subtotal_cents)}</span>
                   </div>
+                  {o.discount_cents > 0 && (
+                    <div className="row">
+                      <span>⭐ Loyalty discount</span>
+                      <span>−{formatCents(o.discount_cents)}</span>
+                    </div>
+                  )}
                   <div className="row">
                     <span>Tax</span>
                     <span>{formatCents(o.tax_cents)}</span>

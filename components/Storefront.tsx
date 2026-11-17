@@ -7,8 +7,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { CATEGORIES, MENU, formatCents, type MenuItem } from "@/lib/menu";
+import { formatCents, type MenuItem } from "@/lib/menu";
 import { getBrowserClient } from "@/lib/supabase/client";
+import {
+  PICKUP_HOURS,
+  DELIVERY_HOURS,
+  formatWindow,
+  pickupWindowToday,
+  denverParts,
+  denverTimeTodayToISO,
+  validatePickupTime,
+  minutesToInputValue,
+} from "@/lib/hours";
 
 const CART_KEY = "madinah_cart_v1";
 type Cart = Record<string, number>;
@@ -28,7 +38,26 @@ function taxFor(subtotal: number): number {
   return Math.round(subtotal * 0.08);
 }
 
-export default function Storefront({ testMode }: { testMode: boolean }) {
+interface SiteState {
+  settings: {
+    ordering_enabled: boolean;
+    pickup_enabled: boolean;
+    delivery_enabled: boolean;
+  };
+  unavailable: string[];
+  promotions: { id: number; title: string; body: string; item_id: string | null }[];
+  photos: Record<string, string>;
+}
+
+export default function Storefront({
+  testMode,
+  menu,
+  categories,
+}: {
+  testMode: boolean;
+  menu: MenuItem[];
+  categories: string[];
+}) {
   const [cart, setCart] = useState<Cart>({});
   const [cartLoaded, setCartLoaded] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
@@ -54,6 +83,15 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
   const [siPassword, setSiPassword] = useState("");
   const [siBusy, setSiBusy] = useState(false);
   const [siError, setSiError] = useState("");
+  // Loyalty (signed-in customers only).
+  const [pointsBalance, setPointsBalance] = useState<number | null>(null);
+  const [usePoints, setUsePoints] = useState(false);
+  // Admin-controlled site state (switches, sold-out dishes, promotions,
+  // uploaded photos). Defaults keep the site fully open until loaded.
+  const [siteState, setSiteState] = useState<SiteState | null>(null);
+  // Scheduled pickup.
+  const [pickupWhen, setPickupWhen] = useState<"asap" | "later">("asap");
+  const [pickupTime, setPickupTime] = useState("");
   const feeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feeSeq = useRef(0);
 
@@ -86,6 +124,31 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
     if (cartLoaded) localStorage.setItem(CART_KEY, JSON.stringify(cart));
   }, [cart, cartLoaded]);
 
+  // Admin-controlled site state: switches, sold-out dishes, promotions,
+  // uploaded dish photos. Loaded once; the site fails open (all ordering
+  // on, everything available) if it cannot be reached.
+  useEffect(() => {
+    fetch("/api/admin")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: SiteState | null) => {
+        if (data) setSiteState(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  const orderingClosed = siteState !== null && !siteState.settings.ordering_enabled;
+  const pickupOff = siteState !== null && !siteState.settings.pickup_enabled;
+  const deliveryOff = siteState !== null && !siteState.settings.delivery_enabled;
+  const unavailableSet = new Set(siteState?.unavailable ?? []);
+  const promos = siteState?.promotions ?? [];
+  const dishPhotos = siteState?.photos ?? {};
+
+  // If the admin turned the selected fulfillment type off, switch over.
+  useEffect(() => {
+    if (fulfillment === "pickup" && pickupOff && !deliveryOff) setFulfillment("delivery");
+    if (fulfillment === "delivery" && deliveryOff && !pickupOff) setFulfillment("pickup");
+  }, [fulfillment, pickupOff, deliveryOff]);
+
   // Load the signed-in customer's profile: greet them and prefill the
   // checkout form from their saved details (only into fields still empty).
   async function loadAccountFromToken(token: string) {
@@ -106,6 +169,10 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
       }
       if (p.phone) setPhone((prev) => prev || p.phone);
       if (p.default_address) setAddress((prev) => prev || p.default_address);
+      // Loyalty balance for the checkout points box (rides along with /me).
+      if (me.points && typeof me.points.balance === "number") {
+        setPointsBalance(me.points.balance);
+      }
     } catch {
       /* guest checkout is unaffected */
     }
@@ -191,25 +258,34 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
     setAccountName(null);
     setAccountEmail(null);
     setGuestChosen(false);
+    setPointsBalance(null);
+    setUsePoints(false);
   }
 
   const lines = useMemo(() => {
-    return MENU.filter((m) => (cart[m.id] ?? 0) > 0).map((m) => ({
+    return menu.filter((m) => (cart[m.id] ?? 0) > 0).map((m) => ({
       item: m,
       qty: cart[m.id],
       line_total_cents: m.price_cents * cart[m.id],
     }));
-  }, [cart]);
+  }, [cart, menu]);
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
   const subtotal = lines.reduce((s, l) => s + l.line_total_cents, 0);
-  const tax = taxFor(subtotal);
+  // Loyalty preview: whole 100-point blocks ($5.00 each), capped by the
+  // subtotal. The server recomputes this authoritatively at checkout.
+  const redeemBlocks =
+    usePoints && pointsBalance !== null
+      ? Math.min(Math.floor(pointsBalance / 100), Math.floor(subtotal / 500))
+      : 0;
+  const discountPreview = redeemBlocks * 500;
+  const tax = taxFor(subtotal - discountPreview);
   const tipCustomCents = tipCustom ? Math.round(Number(tipCustom) * 100) : NaN;
   const tip =
     tipCustom && Number.isFinite(tipCustomCents)
       ? Math.min(Math.max(tipCustomCents, 0), 20000)
       : Math.round((subtotal * Math.min(Math.max(tipPercent, 0), 30)) / 100);
   const deliveryFee = fulfillment === "delivery" && fee.kind === "ok" ? fee.fee_cents : 0;
-  const total = subtotal + tax + deliveryFee + tip;
+  const total = subtotal - discountPreview + tax + deliveryFee + tip;
 
   const setQty = useCallback((item: MenuItem, qty: number) => {
     setCart((prev) => {
@@ -269,6 +345,15 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
     if (fulfillment === "delivery" && fee.kind !== "ok") {
       return setError("Please enter a delivery address inside our delivery area first.");
     }
+    // Scheduled pickup ("pickup for later") — validated again on the server.
+    let scheduledFor: string | undefined;
+    if (fulfillment === "pickup" && pickupWhen === "later") {
+      const iso = pickupTime ? denverTimeTodayToISO(pickupTime) : null;
+      if (!iso) return setError("Please choose a pickup time.");
+      const problem = validatePickupTime(iso);
+      if (problem) return setError(problem);
+      scheduledFor = iso;
+    }
     setPlacing(true);
     try {
       // Attach the account session (if any) so the order is saved to the
@@ -295,6 +380,8 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
           ...(tipCustom && Number.isFinite(tipCustomCents)
             ? { tip_custom_cents: tipCustomCents }
             : { tip_percent: tipPercent }),
+          ...(usePoints ? { use_points: true } : {}),
+          ...(scheduledFor ? { scheduled_for: scheduledFor } : {}),
         }),
       });
       const data = await res.json();
@@ -360,6 +447,34 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
         </div>
       )}
 
+      {orderingClosed && (
+        <div className="closed-banner">
+          🔴 Online ordering is closed right now — please call us at{" "}
+          <a href="tel:+17207630786">720-763-0786</a>. You can still browse the menu.
+        </div>
+      )}
+
+      {promos.map((p) => {
+        const dish = p.item_id ? menu.find((m) => m.id === p.item_id) : null;
+        return (
+          <div className="promo-box" key={p.id}>
+            {dish && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={dishPhotos[dish.id] ?? dish.image} alt={dish.name} />
+            )}
+            <div className="promo-text">
+              <strong>🎁 {p.title}</strong>
+              {p.body && <span>{p.body}</span>}
+              {dish && (
+                <span className="promo-dish">
+                  {dish.name} · {formatCents(dish.price_cents)}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
       <div className="hero">
         <h2>Delicious Kabobs, Gyros &amp; More</h2>
         <p>Order pickup or delivery — platters from $11.75, sandwiches from $8.99.</p>
@@ -377,17 +492,18 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
           </div>
         )}
 
-        {CATEGORIES.map((category) => (
+        {categories.map((category) => (
           <section key={category}>
             <h2 className="category-title">{category}</h2>
             <div className="menu-grid">
-              {MENU.filter((m) => m.category === category).map((m) => {
+              {menu.filter((m) => m.category === category).map((m) => {
                 const qty = cart[m.id] ?? 0;
+                const soldOut = unavailableSet.has(m.id);
                 return (
                   <article className="card" key={m.id}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={m.image}
+                      src={dishPhotos[m.id] ?? m.image}
                       alt={m.name}
                       loading="lazy"
                       onError={(e) => {
@@ -402,7 +518,23 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
                       <p>{m.description}</p>
                       <div className="price-row">
                         <span className="price">{formatCents(m.price_cents)}</span>
-                        {qty === 0 ? (
+                        {soldOut ? (
+                          <>
+                            <span className="soldout-badge">Sold out</span>
+                            {qty > 0 && (
+                              <span className="qty-controls">
+                                <button type="button" onClick={() => setQty(m, qty - 1)} aria-label="Remove one">
+                                  −
+                                </button>
+                                <span className="count">{qty}</span>
+                              </span>
+                            )}
+                          </>
+                        ) : orderingClosed && qty === 0 ? (
+                          <button type="button" className="add-btn" disabled>
+                            Closed
+                          </button>
+                        ) : qty === 0 ? (
                           <button type="button" className="add-btn" onClick={() => setQty(m, 1)}>
                             Add
                           </button>
@@ -530,17 +662,61 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
                 type="button"
                 className={fulfillment === "pickup" ? "active" : ""}
                 onClick={() => setFulfillment("pickup")}
+                disabled={pickupOff}
               >
-                🏃 Pickup
+                🏃 Pickup{pickupOff ? " (off)" : ""}
               </button>
               <button
                 type="button"
                 className={fulfillment === "delivery" ? "active" : ""}
                 onClick={() => setFulfillment("delivery")}
+                disabled={deliveryOff}
               >
-                🛵 Delivery
+                🛵 Delivery{deliveryOff ? " (off)" : ""}
               </button>
             </div>
+            <div className="fee-msg">
+              {fulfillment === "pickup"
+                ? `Pickup today: ${formatWindow(PICKUP_HOURS[denverParts(new Date()).dayIndex])}`
+                : `Delivery today: ${formatWindow(DELIVERY_HOURS[denverParts(new Date()).dayIndex])}`}
+            </div>
+
+            {fulfillment === "pickup" && (
+              <div className="field">
+                <label>Pickup time</label>
+                <div className="toggle-row">
+                  <button
+                    type="button"
+                    className={pickupWhen === "asap" ? "active" : ""}
+                    onClick={() => setPickupWhen("asap")}
+                  >
+                    ⚡ As soon as possible
+                  </button>
+                  <button
+                    type="button"
+                    className={pickupWhen === "later" ? "active" : ""}
+                    onClick={() => setPickupWhen("later")}
+                  >
+                    ⏰ Later today
+                  </button>
+                </div>
+                {pickupWhen === "later" && (
+                  <>
+                    <input
+                      type="time"
+                      value={pickupTime}
+                      min={minutesToInputValue(pickupWindowToday().open)}
+                      max={minutesToInputValue(pickupWindowToday().close)}
+                      onChange={(e) => setPickupTime(e.target.value)}
+                    />
+                    <div className="fee-msg">
+                      Pick any time today inside pickup hours (
+                      {formatWindow(pickupWindowToday())}) — e.g. in 2 or 3 hours.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             <div className="field">
               <label htmlFor="co-first">First name</label>
@@ -636,11 +812,42 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
               />
             </div>
 
+            {accountEmail && pointsBalance !== null && (
+              <div className="auth-box">
+                {pointsBalance >= 100 ? (
+                  <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={usePoints}
+                      onChange={(e) => setUsePoints(e.target.checked)}
+                    />
+                    <span>
+                      ⭐ Use my points — you have <strong>{pointsBalance} pts</strong>
+                      {redeemBlocks > 0 && usePoints
+                        ? ` · ${formatCents(discountPreview)} off applied`
+                        : ` · ${formatCents(Math.min(Math.floor(pointsBalance / 100) * 500, Math.floor(subtotal / 500) * 500))} off available`}
+                    </span>
+                  </label>
+                ) : (
+                  <span>
+                    ⭐ You have <strong>{pointsBalance} points</strong> — earn{" "}
+                    {100 - pointsBalance} more for $5.00 off.
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="breakdown">
               <div className="row">
                 <span>Subtotal</span>
                 <span>{formatCents(subtotal)}</span>
               </div>
+              {discountPreview > 0 && (
+                <div className="row">
+                  <span>⭐ Loyalty discount ({redeemBlocks * 100} pts)</span>
+                  <span>−{formatCents(discountPreview)}</span>
+                </div>
+              )}
               <div className="row">
                 <span>Sales tax (8%)</span>
                 <span>{formatCents(tax)}</span>
@@ -667,7 +874,7 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
             <button
               type="button"
               className="checkout-btn"
-              disabled={placing || checkoutBlocked || lines.length === 0}
+              disabled={placing || checkoutBlocked || orderingClosed || lines.length === 0}
               onClick={placeOrder}
             >
               {placing
@@ -686,6 +893,10 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
         Madinah Market · 3126 S Parker Rd, Aurora, CO 80014 ·{" "}
         <a href="tel:+17207630786">720-763-0786</a>
         <br />
+        🏃 Pickup: Mon–Sat {formatWindow(PICKUP_HOURS[1])} · Sun {formatWindow(PICKUP_HOURS[0])}
+        <br />
+        🛵 Delivery: Mon–Sat {formatWindow(DELIVERY_HOURS[1])} · Sun {formatWindow(DELIVERY_HOURS[0])}
+        <br />
         100% Halal · Kabob, Turkish, Afghan Persian &amp; Middle Eastern
       </footer>
 
@@ -694,15 +905,19 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
           <span className="total">
             🛒 {itemCount} item{itemCount === 1 ? "" : "s"} · {formatCents(subtotal)}
           </span>
-          <button
-            type="button"
-            onClick={() => {
-              setShowCheckout(true);
-              setTimeout(() => document.getElementById("checkout")?.scrollIntoView({ behavior: "smooth" }), 50);
-            }}
-          >
-            Checkout →
-          </button>
+          {orderingClosed ? (
+            <span>🔴 Ordering closed</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setShowCheckout(true);
+                setTimeout(() => document.getElementById("checkout")?.scrollIntoView({ behavior: "smooth" }), 50);
+              }}
+            >
+              Checkout →
+            </button>
+          )}
         </div>
       )}
       {showCheckout && (

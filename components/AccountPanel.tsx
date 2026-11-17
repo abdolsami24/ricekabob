@@ -47,6 +47,17 @@ export default function AccountPanel() {
   const [pAddress, setPAddress] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
 
+  // Loyalty points.
+  interface PointsRow {
+    id: number;
+    order_id: number | null;
+    delta: number;
+    reason: string;
+    created_at: string;
+  }
+  const [pointsBalance, setPointsBalance] = useState<number | null>(null);
+  const [pointsHistory, setPointsHistory] = useState<PointsRow[]>([]);
+
   const loadAccount = useCallback(async () => {
     const client = getBrowserClient();
     if (!client) {
@@ -59,6 +70,8 @@ export default function AccountPanel() {
       setEmail(null);
       setProfile(null);
       setOrders([]);
+      setPointsBalance(null);
+      setPointsHistory([]);
       setLoading(false);
       return;
     }
@@ -75,6 +88,12 @@ export default function AccountPanel() {
           setPName(me.profile.display_name ?? "");
           setPPhone(me.profile.phone ?? "");
           setPAddress(me.profile.default_address ?? "");
+        }
+        if (me.points) {
+          setPointsBalance(
+            typeof me.points.balance === "number" ? me.points.balance : null
+          );
+          setPointsHistory((me.points.history ?? []) as PointsRow[]);
         }
       }
       if (ordersRes.ok) {
@@ -291,6 +310,40 @@ export default function AccountPanel() {
             <button type="button" onClick={logout} style={{ marginTop: "0.8rem" }}>
               Log out
             </button>
+          </section>
+
+          <section className="panel">
+            <h3>⭐ Loyalty points</h3>
+            <p style={{ fontSize: "1.3rem", margin: "0.2rem 0" }}>
+              <strong>{pointsBalance ?? 0} points</strong>
+            </p>
+            <p style={{ color: "#8a7a5f", marginTop: 0 }}>
+              Earn 1 point per $1 on paid orders · 100 points = $5.00 off at checkout.
+              {pointsBalance !== null && pointsBalance >= 100
+                ? " You can use your points on your next order!"
+                : pointsBalance !== null
+                  ? ` Earn ${100 - pointsBalance} more for $5.00 off.`
+                  : ""}
+            </p>
+            {pointsHistory.length > 0 && (
+              <div>
+                {pointsHistory.map((h) => (
+                  <div className="cart-line" key={h.id}>
+                    <span>
+                      {h.reason === "earn" && "⭐ Earned"}
+                      {h.reason === "redeem" && "🎁 Used at checkout"}
+                      {h.reason === "refund" && "↩️ Refunded (order cancelled)"}
+                      {h.reason === "reversal" && "↩️ Removed (order cancelled)"}
+                      {h.order_id ? ` · Order #${h.order_id}` : ""} ·{" "}
+                      {new Date(h.created_at).toLocaleDateString()}
+                    </span>
+                    <span>
+                      {h.delta > 0 ? `+${h.delta}` : h.delta} pts
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="panel">
