@@ -3,9 +3,15 @@
 // kitchen_status, payment_status, created_at — never names, phones,
 // addresses or prices.
 //
-// Real-launch rule: only PAID orders from the last 4 hours; completed and
-// cancelled never appear. When NEXT_PUBLIC_BOARD_TEST_MODE=true the rule is
+// Real-launch rule: only PAID orders from the last 4 hours; cancelled
+// never appears. When NEXT_PUBLIC_BOARD_TEST_MODE=true the rule is
 // relaxed for testing (all of today's active orders, any payment state).
+//
+// One-tap kitchen flow: staff complete an order with a single tap, which
+// would make it vanish here instantly — so a paid order completed in the
+// last 15 minutes (by created_at; there is no completed_at column) is
+// still shown as READY, giving the customer time to see their number
+// before it clears itself.
 
 import { NextResponse } from "next/server";
 import { getServiceClient, supabaseConfigured } from "@/lib/supabase/server";
@@ -41,5 +47,23 @@ export async function GET() {
     console.error("[board-orders] query failed:", error);
     return NextResponse.json({ orders: [] });
   }
-  return NextResponse.json({ orders: data ?? [], test_mode: testMode });
+
+  const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data: doneData } = await supabase
+    .from("orders")
+    .select("id, kitchen_status, payment_status, created_at")
+    .eq("kitchen_status", "completed")
+    .in("payment_status", ["paid", "test_paid"])
+    .gte("created_at", fifteenMinAgo)
+    .order("created_at", { ascending: true })
+    .limit(60);
+  const doneAsReady = (doneData ?? []).map((o) => ({
+    ...o,
+    kitchen_status: "ready",
+  }));
+
+  const orders = [...(data ?? []), ...doneAsReady].sort((a, b) =>
+    String(a.created_at).localeCompare(String(b.created_at))
+  );
+  return NextResponse.json({ orders, test_mode: testMode });
 }
