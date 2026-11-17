@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { supabaseConfigured, verifyCustomerUser, getServiceClient } from "@/lib/supabase/server";
 import { ensureProfile } from "@/lib/profiles";
+import { getPointsBalance, getPointsHistory } from "@/lib/points";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,18 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Login required." }, { status: 401 });
   }
   const profile = await ensureProfile(user);
-  return NextResponse.json({ email: user.email ?? null, profile });
+  // Loyalty (best-effort: null until the loyalty schema has been run).
+  let points: { balance: number; history: unknown[] } | null = null;
+  try {
+    const [balance, history] = await Promise.all([
+      getPointsBalance(user.id),
+      getPointsHistory(user.id),
+    ]);
+    points = { balance, history };
+  } catch {
+    points = null;
+  }
+  return NextResponse.json({ email: user.email ?? null, profile, points });
 }
 
 export async function POST(req: Request) {
