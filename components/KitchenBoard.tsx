@@ -33,12 +33,9 @@ interface KitchenOrder {
   created_at: string;
 }
 
-const NEXT_STATUS: Record<string, { status: string; label: string }> = {
-  new: { status: "accepted", label: "✅ Accept" },
-  accepted: { status: "preparing", label: "👨‍🍳 Start preparing" },
-  preparing: { status: "ready", label: "🟢 Mark READY" },
-  ready: { status: "completed", label: "✔ Complete" },
-};
+// One-tap flow (owner's request, 2026-11-16): no Accept / Preparing /
+// Ready steps. Staff tap ONE button when the food is ready; the order is
+// completed and leaves the board immediately.
 
 function speak(text: string) {
   try {
@@ -236,7 +233,7 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
 
   async function setStatus(order: KitchenOrder, status: string) {
     if (!session) return;
-    if (status === "accepted") ackedRef.current.add(order.id);
+    if (status === "accepted" || status === "completed") ackedRef.current.add(order.id);
     await fetch("/api/kitchen/status", {
       method: "POST",
       headers: {
@@ -352,7 +349,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
 
         <div className="k-grid">
           {visible.map((o) => {
-            const next = NEXT_STATUS[o.kitchen_status];
             return (
               <article className={`k-card${o.kitchen_status === "new" ? " is-new" : ""}`} key={o.id}>
                 <h2>
@@ -416,19 +412,15 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                   </div>
                 </div>
                 <div className="k-actions">
-                  {next && o.kitchen_status !== "completed" && (
-                    <button type="button" onClick={() => setStatus(o, next.status)}>
-                      {next.label}
-                    </button>
-                  )}
+                  <button type="button" onClick={() => setStatus(o, "completed")}>
+                    ✔ READY — Done
+                  </button>
                   <button type="button" className="secondary" onClick={() => printTicket(o)}>
                     🖨 Print ticket
                   </button>
-                  {o.kitchen_status !== "completed" && (
-                    <button type="button" className="danger" onClick={() => setStatus(o, "cancelled")}>
-                      Cancel order
-                    </button>
-                  )}
+                  <button type="button" className="danger" onClick={() => setStatus(o, "cancelled")}>
+                    Cancel order
+                  </button>
                 </div>
               </article>
             );
