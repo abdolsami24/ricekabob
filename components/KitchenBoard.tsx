@@ -304,7 +304,13 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
     );
   }
 
-  const visible = orders.filter((o) => o.kitchen_status !== "cancelled");
+  // Active board: completed orders LEAVE the main list as soon as they are
+  // completed (staff request) and move to the "Completed today" section
+  // below; cancelled orders stay hidden entirely.
+  const visible = orders.filter(
+    (o) => o.kitchen_status !== "cancelled" && o.kitchen_status !== "completed"
+  );
+  const doneToday = orders.filter((o) => o.kitchen_status === "completed");
 
   return (
     <div className="kitchen-body">
@@ -342,7 +348,7 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
           🔔 NEW ORDER! — tap: I see it — Accept
         </button>
 
-        {visible.length === 0 && <p style={{ marginTop: "1.5rem" }}>No orders yet today.</p>}
+        {visible.length === 0 && <p style={{ marginTop: "1.5rem" }}>No active orders.</p>}
 
         <div className="k-grid">
           {visible.map((o) => {
@@ -428,6 +434,27 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
             );
           })}
         </div>
+
+        {doneToday.length > 0 && (
+          <details style={{ marginTop: "2rem" }}>
+            <summary style={{ cursor: "pointer", color: "#cbbfa8", fontWeight: 700 }}>
+              ✔ Completed today ({doneToday.length}) — tap to view
+            </summary>
+            <div style={{ marginTop: "0.6rem", color: "#cbbfa8" }}>
+              {doneToday.map((o) => (
+                <div
+                  key={o.id}
+                  style={{ padding: "0.35rem 0", borderBottom: "1px dashed #444" }}
+                >
+                  #{o.id} · {o.customer_name ?? ""} ·{" "}
+                  {o.fulfillment === "delivery" ? "🛵 Delivery" : "🏃 Pickup"} ·{" "}
+                  {formatCents(o.total_cents)} ·{" "}
+                  {new Date(o.created_at).toLocaleTimeString()}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </div>
     </div>
   );
