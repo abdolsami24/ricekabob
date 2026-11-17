@@ -183,6 +183,23 @@ input, select, textarea { font: inherit; }
   padding: 0.6rem 1.3rem;
   font-weight: 800;
 }
+/* Keep the Checkout button clear of Netlify's floating "Powered by Netlify"
+   badge (bottom-right corner, ~200px wide; it cannot be removed on the
+   Free plan). Desktop: shift the button left with right padding.
+   Mobile: float the bar above the badge as a rounded pill. */
+@media (min-width: 701px) {
+  .cart-bar { padding-right: 13.5rem; }
+}
+@media (max-width: 700px) {
+  .cart-bar {
+    bottom: 66px;
+    left: 0.6rem;
+    right: 0.6rem;
+    border-radius: 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  }
+  footer { padding-bottom: 84px; }
+}
 .panel {
   background: #fff;
   border: 1px solid var(--line);
@@ -218,6 +235,35 @@ input, select, textarea { font: inherit; }
 .fee-msg { font-size: 0.92rem; margin-top: 0.35rem; font-weight: 600; }
 .fee-msg.ok { color: var(--ok); }
 .fee-msg.err { color: var(--red-bright); }
+
+.auth-box {
+  border: 2px dashed var(--gold);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  margin: 0.8rem 0;
+  background: #fffdf5;
+}
+.google-btn {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  border: 2px solid var(--gold);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.auth-link {
+  background: none;
+  border: none;
+  color: var(--red);
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.95rem;
+}
 
 .tip-row { display: flex; gap: 0.45rem; flex-wrap: wrap; }
 .tip-row button {
@@ -398,12 +444,3 @@ input, select, textarea { font: inherit; }
 .ready-flash .big { font-size: 9rem; font-weight: 900; line-height: 1; }
 .ready-flash .label { font-size: 3rem; font-weight: 800; }
 .display-foot { text-align: center; color: #a3a3a3; margin-top: 2rem; font-size: 1.1rem; }
-/* Keep Checkout clear of the Netlify badge */
-@media (min-width: 701px) {
-  .cart-bar { padding-right: 13.5rem; }
-}
-@media (max-width: 700px) {
-  .cart-bar { bottom: 66px; left: 0.6rem; right: 0.6rem; border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
-  footer { padding-bottom: 84px; }
-}
-
