@@ -33,7 +33,8 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
   const [cartLoaded, setCartLoaded] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [fulfillment, setFulfillment] = useState<"pickup" | "delivery">("pickup");
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [note, setNote] = useState("");
@@ -97,7 +98,12 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
       const p = me.profile ?? {};
       setAccountName(p.display_name || me.email || "My account");
       setAccountEmail(me.email ?? null);
-      if (p.display_name) setName((prev) => prev || p.display_name);
+      if (p.display_name) {
+        const parts = p.display_name.trim().split(/\s+/);
+        setFirstName((prev) => prev || parts[0] || "");
+        if (parts.length > 1)
+          setLastName((prev) => prev || parts.slice(1).join(" "));
+      }
       if (p.phone) setPhone((prev) => prev || p.phone);
       if (p.default_address) setAddress((prev) => prev || p.default_address);
     } catch {
@@ -249,10 +255,16 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
   const checkoutBlocked =
     fulfillment === "delivery" && fee.kind !== "ok";
 
+  // Checkout is a two-step flow (Sami's spec): first the customer chooses
+  // Sign in / Sign in with Google / Continue as guest — only then does the
+  // details form (name, phone, tip…) appear, prefilled when signed in.
+  const formOpen = !!accountEmail || guestChosen;
+  const fullName = `${firstName} ${lastName}`.trim();
+
   async function placeOrder() {
     setError("");
     if (lines.length === 0) return setError("Your cart is empty.");
-    if (name.trim().length < 2) return setError("Please enter your name.");
+    if (fullName.length < 2) return setError("Please enter your name.");
     if (phone.replace(/\D/g, "").length < 7) return setError("Please enter your phone number.");
     if (fulfillment === "delivery" && fee.kind !== "ok") {
       return setError("Please enter a delivery address inside our delivery area first.");
@@ -275,7 +287,7 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
         headers,
         body: JSON.stringify({
           items: lines.map((l) => ({ id: l.item.id, qty: l.qty })),
-          customer_name: name.trim(),
+          customer_name: fullName,
           customer_phone: phone.trim(),
           fulfillment,
           delivery_address: fulfillment === "delivery" ? address.trim() : undefined,
@@ -426,25 +438,9 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
               </div>
             ))}
 
-            {accountEmail ? (
+            {!formOpen ? (
               <div className="auth-box">
-                <div className="fee-msg ok">
-                  ✓ Signed in as {accountEmail} — this order will be saved to your account.
-                </div>
-                <button type="button" className="auth-link" onClick={inlineSignOut}>
-                  Not you? Log out
-                </button>
-              </div>
-            ) : guestChosen && !siOpen ? (
-              <div className="auth-box">
-                <span>👤 Continuing as guest · </span>
-                <button type="button" className="auth-link" onClick={() => setSiOpen(true)}>
-                  Sign in
-                </button>
-              </div>
-            ) : (
-              <div className="auth-box">
-                <strong>Have an account?</strong>
+                <strong>Sign in or continue as guest</strong>
                 <div className="toggle-row">
                   <button
                     type="button"
@@ -504,8 +500,31 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
                   </div>
                 )}
               </div>
+            ) : accountEmail ? (
+              <div className="auth-box">
+                <div className="fee-msg ok">
+                  ✓ Signed in as {accountEmail} — your saved details are filled in below, and
+                  this order will be saved to your account.
+                </div>
+                <button type="button" className="auth-link" onClick={inlineSignOut}>
+                  Not you? Log out
+                </button>
+              </div>
+            ) : (
+              <div className="auth-box">
+                <span>👤 Checking out as guest · </span>
+                <button
+                  type="button"
+                  className="auth-link"
+                  onClick={() => setGuestChosen(false)}
+                >
+                  ← Back
+                </button>
+              </div>
             )}
 
+            {formOpen && (
+              <>
             <div className="toggle-row">
               <button
                 type="button"
@@ -524,8 +543,22 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
             </div>
 
             <div className="field">
-              <label htmlFor="co-name">Your name</label>
-              <input id="co-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+              <label htmlFor="co-first">First name</label>
+              <input
+                id="co-first"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                autoComplete="given-name"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="co-last">Last name</label>
+              <input
+                id="co-last"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                autoComplete="family-name"
+              />
             </div>
             <div className="field">
               <label htmlFor="co-phone">Phone number</label>
@@ -643,6 +676,8 @@ export default function Storefront({ testMode }: { testMode: boolean }) {
                   ? `Place ${fulfillment === "delivery" ? "Delivery" : "Pickup"} Order (TEST — no charge)`
                   : `Pay on Stripe & Place ${fulfillment === "delivery" ? "Delivery" : "Pickup"} Order`}
             </button>
+              </>
+            )}
           </section>
         )}
       </main>
