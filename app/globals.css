@@ -100,6 +100,49 @@ input, select, textarea { font: inherit; }
   padding: 0.5rem 1rem;
 }
 
+.closed-banner {
+  background: #fde8e8;
+  border-bottom: 2px solid #c0392b;
+  color: #7b1d12;
+  text-align: center;
+  font-weight: 700;
+  padding: 0.5rem 1rem;
+}
+
+/* Homepage promotion box (admin-managed). */
+.promo-box {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  max-width: 1080px;
+  margin: 1rem auto 0;
+  padding: 0.9rem 1.1rem;
+  background: linear-gradient(135deg, #fdf0d5, #fbe3ae);
+  border: 2px solid var(--gold);
+  border-radius: 14px;
+  color: #4a3205;
+  box-shadow: 0 4px 14px rgba(160, 110, 10, 0.18);
+}
+.promo-box img {
+  width: 84px;
+  height: 84px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex: none;
+}
+.promo-text { display: flex; flex-direction: column; gap: 0.15rem; }
+.promo-text strong { font-size: 1.15rem; }
+.promo-dish { font-weight: 700; color: #8a5a00; }
+
+.soldout-badge {
+  background: #c0392b;
+  color: #fff;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.9rem;
+}
+
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 1rem 6.5rem; }
 
 .category-title {
